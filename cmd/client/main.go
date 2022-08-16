@@ -214,6 +214,8 @@ func (c *Coordinator) doPoll(client *http.Client) error {
 			tc.TargetGroup.Targets = append(tc.TargetGroup.Targets,
 				net.JoinHostPort(*myFqdn, strconv.Itoa(int(port))))
 		}
+	} else {
+		tc.TargetGroup.Targets = append(tc.TargetGroup.Targets, *myFqdn)
 	}
 	if len(*labels) > 0 {
 		tc.TargetGroup.Labels = *labels
