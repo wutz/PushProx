@@ -52,8 +52,10 @@ var (
 	tlsKey      = kingpin.Flag("tls.key", "<key> Private key file").String()
 	metricsAddr = kingpin.Flag("metrics-addr", "Serve Prometheus metrics at this address").Default(":9369").String()
 
-	retryInitialWait = kingpin.Flag("proxy.retry.initial-wait", "Amount of time to wait after proxy failure").Default("1s").Duration()
-	retryMaxWait     = kingpin.Flag("proxy.retry.max-wait", "Maximum amount of time to wait between proxy poll retries").Default("5s").Duration()
+	retryInitialWait     = kingpin.Flag("proxy.retry.initial-wait", "Amount of time to wait after proxy failure").Default("1s").Duration()
+	retryMaxWait         = kingpin.Flag("proxy.retry.max-wait", "Maximum amount of time to wait between proxy poll retries").Default("5s").Duration()
+	maxScrapeTimeout     = kingpin.Flag("scrape.max-timeout", "Any scrape with a timeout higher than this will have to be clamped to this.").Default("5m").Duration()
+	defaultScrapeTimeout = kingpin.Flag("scrape.default-timeout", "If a scrape lacks a timeout, use this value.").Default("15s").Duration()
 
 	ports  = kingpin.Flag("port", "Port to register with").Uint16List()
 	labels = kingpin.Flag("label", "Label to register with").StringMap()
@@ -126,12 +128,8 @@ func (c *Coordinator) handleErr(request *http.Request, client *http.Client, err 
 
 func (c *Coordinator) doScrape(request *http.Request, client *http.Client) {
 	logger := log.With(c.logger, "scrape_id", request.Header.Get("id"))
-	timeout, err := util.GetHeaderTimeout(request.Header)
-	if err != nil {
-		c.handleErr(request, client, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(request.Context(), timeout)
+	ctx, cancel := context.WithTimeout(request.Context(),
+		util.GetScrapeTimeout(maxScrapeTimeout, defaultScrapeTimeout, request.Header))
 	defer cancel()
 	request = request.WithContext(ctx)
 	// We cannot handle https requests at the proxy, as we would only
