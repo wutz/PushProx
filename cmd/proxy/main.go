@@ -20,10 +20,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"os"
-	"strings"
 
 	kingpin "gopkg.in/alecthomas/kingpin.v2"
 
@@ -78,6 +76,11 @@ func copyHTTPResponse(resp *http.Response, w http.ResponseWriter) {
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+type TargetConfig struct {
+	FQDN        string      `json:"fqdn"`
+	TargetGroup targetGroup `json:"target_group"`
 }
 
 type targetGroup struct {
@@ -144,8 +147,13 @@ func (h *httpHandler) handlePush(w http.ResponseWriter, r *http.Request) {
 
 // handlePoll handles clients registering and asking for scrapes.
 func (h *httpHandler) handlePoll(w http.ResponseWriter, r *http.Request) {
-	fqdn, _ := ioutil.ReadAll(r.Body)
-	request, err := h.coordinator.WaitForScrapeInstruction(strings.TrimSpace(string(fqdn)))
+	var tc TargetConfig
+	if err := json.NewDecoder(r.Body).Decode(&tc); err != nil {
+		level.Info(h.logger).Log("msg", "Error json decoding:", "err", err)
+		http.Error(w, fmt.Sprintf("Error json decoding: %s", err.Error()), 400)
+		return
+	}
+	request, err := h.coordinator.WaitForScrapeInstruction(tc.FQDN, tc.TargetGroup)
 	if err != nil {
 		level.Info(h.logger).Log("msg", "Error WaitForScrapeInstruction:", "err", err)
 		http.Error(w, fmt.Sprintf("Error WaitForScrapeInstruction: %s", err.Error()), 408)
@@ -161,7 +169,7 @@ func (h *httpHandler) handleListClients(w http.ResponseWriter, r *http.Request) 
 	known := h.coordinator.KnownClients()
 	targets := make([]*targetGroup, 0, len(known))
 	for _, k := range known {
-		targets = append(targets, &targetGroup{Targets: []string{k}})
+		targets = append(targets, &k)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // https://github.com/prometheus-community/PushProx/issues/111

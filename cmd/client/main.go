@@ -19,12 +19,14 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +54,9 @@ var (
 
 	retryInitialWait = kingpin.Flag("proxy.retry.initial-wait", "Amount of time to wait after proxy failure").Default("1s").Duration()
 	retryMaxWait     = kingpin.Flag("proxy.retry.max-wait", "Maximum amount of time to wait between proxy poll retries").Default("5s").Duration()
+
+	ports  = kingpin.Flag("port", "Port to register with").Uint16List()
+	labels = kingpin.Flag("label", "Label to register with").StringMap()
 )
 
 var (
@@ -77,6 +82,16 @@ var (
 
 func init() {
 	prometheus.MustRegister(pushErrorCounter, pollErrorCounter, scrapeErrorCounter)
+}
+
+type TargetConfig struct {
+	FQDN        string      `json:"fqdn"`
+	TargetGroup targetGroup `json:"target_group"`
+}
+
+type targetGroup struct {
+	Targets []string          `json:"targets"`
+	Labels  map[string]string `json:"labels"`
 }
 
 func newBackOffFromFlags() backoff.BackOff {
@@ -193,7 +208,22 @@ func (c *Coordinator) doPoll(client *http.Client) error {
 		return errors.Wrap(err, "error parsing url poll")
 	}
 	url := base.ResolveReference(u)
-	resp, err := client.Post(url.String(), "", strings.NewReader(*myFqdn))
+	tc := TargetConfig{FQDN: *myFqdn}
+	if len(*ports) > 0 {
+		for _, port := range *ports {
+			tc.TargetGroup.Targets = append(tc.TargetGroup.Targets,
+				net.JoinHostPort(*myFqdn, strconv.Itoa(int(port))))
+		}
+	}
+	if len(*labels) > 0 {
+		tc.TargetGroup.Labels = *labels
+	}
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(tc); err != nil {
+		level.Error(c.logger).Log("msg", "Error encoding targets:", "err", err)
+		return errors.Wrap(err, "error encoding targets")
+	}
+	resp, err := client.Post(url.String(), "", &buf)
 	if err != nil {
 		level.Error(c.logger).Log("msg", "Error polling:", "err", err)
 		return errors.Wrap(err, "error polling")

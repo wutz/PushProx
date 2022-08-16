@@ -54,9 +54,14 @@ type Coordinator struct {
 	// Responses from clients.
 	responses map[string]chan *http.Response
 	// Clients we know about and when they last contacted us.
-	known map[string]time.Time
+	known map[string]targetGroupWrapper
 
 	logger log.Logger
+}
+
+type targetGroupWrapper struct {
+	targetGroup
+	record time.Time
 }
 
 // NewCoordinator initiates the coordinator and starts the client cleanup routine
@@ -64,7 +69,7 @@ func NewCoordinator(logger log.Logger) (*Coordinator, error) {
 	c := &Coordinator{
 		waiting:   map[string]chan *http.Request{},
 		responses: map[string]chan *http.Response{},
-		known:     map[string]time.Time{},
+		known:     map[string]targetGroupWrapper{},
 		logger:    logger,
 	}
 
@@ -133,10 +138,10 @@ func (c *Coordinator) DoScrape(ctx context.Context, r *http.Request) (*http.Resp
 }
 
 // WaitForScrapeInstruction registers a client waiting for a scrape result
-func (c *Coordinator) WaitForScrapeInstruction(fqdn string) (*http.Request, error) {
+func (c *Coordinator) WaitForScrapeInstruction(fqdn string, tg targetGroup) (*http.Request, error) {
 	level.Info(c.logger).Log("msg", "WaitForScrapeInstruction", "fqdn", fqdn)
 
-	c.addKnownClient(fqdn)
+	c.addKnownClient(fqdn, tg)
 	// TODO: What if the client times out?
 	ch := c.getRequestChannel(fqdn)
 
@@ -181,24 +186,27 @@ func (c *Coordinator) ScrapeResult(r *http.Response) error {
 	}
 }
 
-func (c *Coordinator) addKnownClient(fqdn string) {
+func (c *Coordinator) addKnownClient(fqdn string, tg targetGroup) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.known[fqdn] = time.Now()
+	c.known[fqdn] = targetGroupWrapper{
+		record:      time.Now(),
+		targetGroup: tg,
+	}
 	knownClients.Set(float64(len(c.known)))
 }
 
 // KnownClients returns a list of alive clients
-func (c *Coordinator) KnownClients() []string {
+func (c *Coordinator) KnownClients() map[string]targetGroup {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	limit := time.Now().Add(-*registrationTimeout)
-	known := make([]string, 0, len(c.known))
+	known := make(map[string]targetGroup)
 	for k, t := range c.known {
-		if limit.Before(t) {
-			known = append(known, k)
+		if limit.Before(t.record) {
+			known[k] = t.targetGroup
 		}
 	}
 	return known
@@ -213,7 +221,7 @@ func (c *Coordinator) gc() {
 			limit := time.Now().Add(-*registrationTimeout)
 			deleted := 0
 			for k, ts := range c.known {
-				if ts.Before(limit) {
+				if ts.record.Before(limit) {
 					delete(c.known, k)
 					deleted++
 				}
