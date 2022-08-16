@@ -54,6 +54,7 @@ var (
 
 	retryInitialWait     = kingpin.Flag("proxy.retry.initial-wait", "Amount of time to wait after proxy failure").Default("1s").Duration()
 	retryMaxWait         = kingpin.Flag("proxy.retry.max-wait", "Maximum amount of time to wait between proxy poll retries").Default("5s").Duration()
+	pollTimeout          = kingpin.Flag("proxy.poll.timeout", "Amount of time to wait after proxy poll").Default("1m").Duration()
 	maxScrapeTimeout     = kingpin.Flag("scrape.max-timeout", "Any scrape with a timeout higher than this will have to be clamped to this.").Default("5m").Duration()
 	defaultScrapeTimeout = kingpin.Flag("scrape.default-timeout", "If a scrape lacks a timeout, use this value.").Default("15s").Duration()
 
@@ -223,7 +224,15 @@ func (c *Coordinator) doPoll(client *http.Client) error {
 		level.Error(c.logger).Log("msg", "Error encoding targets:", "err", err)
 		return errors.Wrap(err, "error encoding targets")
 	}
-	resp, err := client.Post(url.String(), "", &buf)
+	req, err := http.NewRequest("POST", url.String(), &buf)
+	if err != nil {
+		level.Error(c.logger).Log("msg", "Error new http request:", "err", err)
+		return errors.Wrap(err, "error new http request")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), *pollTimeout)
+	defer cancel()
+	req = req.WithContext(ctx)
+	resp, err := client.Do(req)
 	if err != nil {
 		level.Error(c.logger).Log("msg", "Error polling:", "err", err)
 		return errors.Wrap(err, "error polling")
