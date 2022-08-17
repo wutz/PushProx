@@ -167,9 +167,9 @@ func (h *httpHandler) handlePoll(w http.ResponseWriter, r *http.Request) {
 // handleListClients handles requests to list available clients as a JSON array.
 func (h *httpHandler) handleListClients(w http.ResponseWriter, r *http.Request) {
 	known := h.coordinator.KnownClients()
-	targets := make([]*targetGroup, 0, len(known))
+	targets := make([]targetGroup, 0, len(known))
 	for _, k := range known {
-		targets = append(targets, &k)
+		targets = append(targets, k)
 	}
 	w.Header().Set("Content-Type", "application/json")
 	//nolint:errcheck // https://github.com/prometheus-community/PushProx/issues/111
